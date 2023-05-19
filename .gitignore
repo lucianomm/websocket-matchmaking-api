@@ -1,0 +1,8 @@
+.venv/
+examples/
+deployParameters.json
+.aws-sam/
+matchmakingApi/**/matchmakingTableRepository.py
+!matchmakingApi/matchmakingTableRepository.py
+matchmakingApi/**/glicko_team.py
+!matchmakingApi/glicko_team.py

@@ -1,0 +1,16 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "apiDev"
+resolve_s3 = true
+confirm_changeset = true
+capabilities = ["CAPABILITY_IAM", "CAPABILITY_AUTO_EXPAND"]
+disable_rollback = false
+image_repositories = []
+parameter_overrides = [
+"HostedZoneId=<HOSTED-ZONE-ID>",
+"DedicatedServerClientId=<DEV_DEDICATED_CLIENT_ID>",
+"DedicatedServerClientSecret=<DEV_DEDICATED_CLIENT_SECRET>",
+"UserApiCustomDomainName=<CUSTOM-DOMAIN-NAME>",
+"MatchmakingCustomDomainName=<WEBSOCKET-CUSTOM-DOMAIN-NAME>"]

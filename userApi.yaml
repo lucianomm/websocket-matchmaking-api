@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: |
+  User related API operations
+
+Parameters:
+  Environment:
+    Type: String
+    Description: The name of the environment to deploy to
+  CustomDomainName: 
+    Type: String
+  JwtAuthFunction:
+    Type: String
+  Base64AuthFunction:
+    Type: String
+  HostedZoneId: 
+    Type: String
+  UserApiBasePath:
+    Type: String
+  MatchMakingTableName:
+    Type: String
+    Description: The name of the DynamoDB table for storing MatchMakingData
+  MatchMakingTablePK:
+    Type: String
+    Description: The name of the primary key for the MatchMakingData
+  MatchmakingCustomDomainName:
+    Type: String
+  ConnectionTableName:
+    Type: String
+    Description: The name of the DynamoDB table for storing ConnectionTable
+  ConnectionTablePK:
+    Type: String
+    Description: The name of the primary key for the ConnectionTable
+  CurrentMatchesTableName:
+    Type: String
+    Description: The name of the DynamoDB table for storing CurrentMatchesTable
+  CurrentMatchesTablePK:
+    Type: String
+    Description: The name of the primary key for the CurrentMatchesTable
+  
+
+Globals:
+  Function:
+    Timeout: 15
+    Handler: app.lambda_handler
+    Runtime: python3.9
+
+Resources:
+
+  ApiCertificateManager:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref CustomDomainName
+      DomainValidationOptions:
+        - DomainName: !Ref CustomDomainName
+          HostedZoneId: !Ref HostedZoneId
+      ValidationMethod: DNS
+
+  userApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: userApi
+      StageName: Prod
+      Auth:
+        DefaultAuthorizer: JwtAuthorizer # Should be specified under Api.Auth.Authorizers
+        Authorizers:
+          Base64Authorizer:
+            Identity:
+              Header: Authorization
+              ValidationExpression: Basic.*
+              ReauthorizeEvery: 30
+            FunctionArn: !Ref Base64AuthFunction
+            FunctionPayloadType: TOKEN
+          JwtAuthorizer:
+            Identity:
+              Header: Authorization
+              ValidationExpression: Bearer.*
+              ReauthorizeEvery: 30
+            FunctionArn: !Ref JwtAuthFunction
+            FunctionPayloadType: TOKEN
+      Domain:
+        CertificateArn: !Ref ApiCertificateManager
+        DomainName: !Ref CustomDomainName
+        BasePath: 
+          - !Ref UserApiBasePath
+        EndpointConfiguration: EDGE
+        Route53:
+          HostedZoneId: !Ref HostedZoneId
+
+  serverReady:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      CodeUri: matchmakingApi/HTTP/serverReady
+      Description: User api endpoint to announce to players that the server is ready
+      Policies: 
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionTableName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MatchMakingTableName
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+                - execute-api:Invoke
+              Resource: !Join
+                - ''
+                - - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:'
+                  - Fn::ImportValue: !Sub 'WebSocketApiId-${Environment}'
+                  - '/*'
+      Environment:
+        Variables:
+          MATCHMAKING_ENDPOINT: !Ref MatchmakingCustomDomainName
+          DATA_TABLE_NAME: !Ref MatchMakingTableName
+          DATA_TABLE_PK: !Ref MatchMakingTablePK
+          CONNECTION_TABLE_NAME: !Ref ConnectionTableName
+          CONNECTION_TABLE_PK: !Ref ConnectionTablePK
+      Events:
+        severReady:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            RestApiId: !Ref userApi
+            Path: /matchmaking/serverReady
+            Method: post
+            Auth:
+              Authorizer: Base64Authorizer
+  
+  matchFinished:
+    Type: "AWS::Serverless::Function"
+    Properties:
+      CodeUri: matchmakingApi/HTTP/matchFinished
+      Description: User api endpoint to run flows regarding match finished
+      Policies: 
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionTableName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MatchMakingTableName
+      Environment:
+        Variables:
+          DATA_TABLE_NAME: !Ref MatchMakingTableName
+          DATA_TABLE_PK: !Ref MatchMakingTablePK
+          CONNECTION_TABLE_NAME: !Ref ConnectionTableName
+          CONNECTION_TABLE_PK: !Ref ConnectionTablePK
+      Events:
+        matchFinished:
+          Type: Api
+          Properties:
+            RestApiId: !Ref userApi
+            Path: /matchmaking/matchFinished
+            Method: post
+            Auth:
+              Authorizer: Base64Authorizer

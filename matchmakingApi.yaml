@@ -1,0 +1,338 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: A simple WebSocket API setup using CloudFormation
+
+Parameters:
+  CustomDomainName:
+    Type: String
+    Description: The custom domain name for the WebSocket API
+  HostedZoneId:
+    Type: String
+    Description: The Hosted Zone ID for the custom domain name
+  Environment:
+    Type: String
+    Default: DEV
+    Description: The environment to deploy to
+  JwtAuthorizerArn:
+    Type: String
+    Description: The ARN of the JWT authorizer AWS Lambda function
+  MatchMakingTableName:
+    Type: String
+    Description: The name of the DynamoDB table for storing MatchMakingTable
+  MatchMakingTablePK:
+    Type: String
+    Description: The name of the primary key for the MatchMakingTable
+  ConnectionTableName:
+    Type: String
+    Description: The name of the DynamoDB table for storing ConnectionTable
+  ConnectionTablePK:
+    Type: String
+    Description: The name of the primary key for the ConnectionTable
+  CurrentMatchesTablePK:
+    Type: String
+    Description: The name of the primary key for the CurrentMatchesTable
+  CurrentMatchesTableName:
+    Type: String
+    Description: The name of the DynamoDB table for storing CurrentMatchesTable
+
+Resources:
+
+  CustomAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      AuthorizerType: REQUEST
+      AuthorizerUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${JwtAuthorizerArn}/invocations'
+      IdentitySource:
+        - 'route.request.header.Authorization'
+      Name: CustomJWTAuthorizer
+
+  LambdaAuthorizerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref JwtAuthorizerArn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*"
+
+  ApiCertificateManager:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref CustomDomainName
+      DomainValidationOptions:
+        - DomainName: !Ref CustomDomainName
+          HostedZoneId: !Ref HostedZoneId
+      ValidationMethod: DNS
+
+  WebSocketApiDomain:
+    Type: AWS::ApiGatewayV2::DomainName
+    Properties:
+      DomainName: !Ref CustomDomainName
+      DomainNameConfigurations:
+        - CertificateArn: !Ref ApiCertificateManager
+
+  WebSocketDomainNameAlias:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref CustomDomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt WebSocketApiDomain.RegionalDomainName
+        HostedZoneId: !GetAtt WebSocketApiDomain.RegionalHostedZoneId
+
+
+  WebSocketApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      DomainName: !Ref WebSocketApiDomain
+      Stage: !Ref WebSocketStage
+
+  WebSocketDeployment:
+    Type: 'AWS::ApiGatewayV2::Deployment'
+    Properties:
+      ApiId: !Ref WebSocketAPI
+    DependsOn: 
+      - ConnectRoute
+      - DisconnectRoute
+
+  WebSocketStage:
+    Type: 'AWS::ApiGatewayV2::Stage'
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      DeploymentId: !Ref WebSocketDeployment
+      StageName: default
+      Description: Default stage for WebSocket API
+
+  WebSocketAPI:
+    Type: 'AWS::ApiGatewayV2::Api'
+    Properties:
+      Name: !Sub 'MatchmakingAPI ${Environment}'
+      ProtocolType: 'WEBSOCKET'
+      RouteSelectionExpression: '$request.body.action'
+
+  ConnectRoute:
+    Type: 'AWS::ApiGatewayV2::Route'
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: $connect
+      AuthorizerId: !Ref CustomAuthorizer
+      AuthorizationType: CUSTOM
+      OperationName: ConnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref ConnectIntegration
+
+  ConnectIntegration:
+    Type: 'AWS::ApiGatewayV2::Integration'
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: 'AWS_PROXY'
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ConnectHandler.Arn}/invocations'
+
+  ConnectHandler:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Runtime: python3.9
+      Handler: app.lambda_handler
+      CodeUri: matchmakingApi/WEBSOCKET/connectHandler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionTableName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MatchMakingTableName
+      Environment:
+        Variables:
+          CONNECTION_TABLE_NAME: !Ref ConnectionTableName
+          CONNECTION_TABLE_PK: !Ref ConnectionTablePK
+          DATA_TABLE_NAME: !Ref MatchMakingTableName
+          DATA_TABLE_PK: !Ref MatchMakingTablePK
+
+  ConnectHandlerPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - WebSocketAPI
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ConnectHandler
+      Principal: apigateway.amazonaws.com
+
+  DisconnectHandler:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      CodeUri: matchmakingApi/WEBSOCKET/disconnectHandler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionTableName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MatchMakingTableName
+      Environment:
+        Variables:
+          CONNECTION_TABLE_NAME: !Ref ConnectionTableName
+          CONNECTION_TABLE_PK: !Ref ConnectionTablePK
+          DATA_TABLE_NAME: !Ref MatchMakingTableName
+          DATA_TABLE_PK: !Ref MatchMakingTablePK
+
+  DisconnectIntegration:
+    Type: 'AWS::ApiGatewayV2::Integration'
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DisconnectHandler.Arn}/invocations
+
+  DisconnectRoute:
+    Type: 'AWS::ApiGatewayV2::Route'
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: '$disconnect'
+      Target: !Sub 'integrations/${DisconnectIntegration}'
+
+  DisconnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - WebSocketAPI
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref DisconnectHandler
+      Principal: apigateway.amazonaws.com
+
+  JoinQueueFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      CodeUri: matchmakingApi/WEBSOCKET/joinQueueHandler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionTableName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MatchMakingTableName
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+                - execute-api:Invoke
+              Resource:
+                - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*'
+      Environment:
+        Variables:
+          CONNECTION_TABLE_NAME: !Ref ConnectionTableName
+          CONNECTION_TABLE_PK: !Ref ConnectionTablePK
+          DATA_TABLE_NAME: !Ref MatchMakingTableName
+          DATA_TABLE_PK: !Ref MatchMakingTablePK
+
+  JoinQueueRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: joinQueue
+      AuthorizationType: NONE
+      OperationName: joinQueue
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref JoinQueueIntegration
+
+  JoinQueueIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${JoinQueueFunction.Arn}/invocations'
+
+  JoinQueuePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - WebSocketAPI
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref JoinQueueFunction
+      Principal: apigateway.amazonaws.com
+
+  TryCreateMatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 30
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      CodeUri: matchmakingApi/WEBSOCKET/tryCreateMatchHandler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConnectionTableName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MatchMakingTableName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CurrentMatchesTableName
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+                - execute-api:Invoke
+              Resource:
+                - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketAPI}/*'
+            - Effect: Allow
+              Action:
+                - ec2:DescribeSubnets
+                - ec2:DescribeSecurityGroups
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - ecs:RunTask
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource: '*'
+      Environment:
+        Variables:
+          CONNECTION_TABLE_NAME: !Ref ConnectionTableName
+          CONNECTION_TABLE_PK: !Ref ConnectionTablePK
+          DATA_TABLE_NAME: !Ref MatchMakingTableName
+          DATA_TABLE_PK: !Ref MatchMakingTablePK
+          CURRENT_MATCHES_TABLE_NAME: !Ref CurrentMatchesTableName
+          CURRENT_MATCHES_TABLE_PK: !Ref CurrentMatchesTablePK
+      ReservedConcurrentExecutions: 1
+
+  TryCreateMatchRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      RouteKey: tryCreateMatch
+      AuthorizationType: NONE
+      OperationName: tryCreateMatch
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref TryCreateMatchIntegration
+
+  TryCreateMatchIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TryCreateMatchFunction.Arn}/invocations'
+
+  TryCreateMatchPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - WebSocketAPI
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TryCreateMatchFunction
+      Principal: apigateway.amazonaws.com
+
+Outputs:
+  WebSocketURI:
+    Description: 'WebSocket URI for connecting to the WebSocket API'
+    Value: !Sub 'wss://${CustomDomainName}'
+  WebSocketApiIdOutput:
+    Description: The WebSocket API ID
+    Value: !Ref WebSocketAPI
+    Export:
+      Name: !Join [ "", [ WebSocketApiId, "-", !Ref Environment ] ]

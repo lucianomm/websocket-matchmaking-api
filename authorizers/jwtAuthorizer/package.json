@@ -1,0 +1,14 @@
+{
+  "name": "jwtauthorizer",
+  "version": "1.0.0",
+  "description": "JWT Token Verifier for RSA encryptions",
+  "main": "app.js",
+  "scripts": {
+    "test": "node -e \"require('./app').handler({'methodArn':'test','authorizationToken':'Bearer eyJraWQiOiIyMDIyLTA2LTE0VDA2OjE3OjU3LjA0NzkyODcwMFoiLCJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiJ4eXphNzg5MUxLeFNKTnNXbVJBTGRKek5yRFlRcmZJYiIsInN1YiI6IjAwMDIyZDQ3MDE3MTQxZjQ4NzZhZjlmNTFkZjdlNTgzIiwicGZzaWQiOiJjYTFlODcwODhlNGM0NGMwOWVmZWE4MjU4ZjUzYjZiMSIsImFjdCI6eyJwbHRmbSI6Im90aGVyIiwiZWFpZCI6Ijk2MjFiN2Y5OTAwNjRlNmVhMTY3MTNhNzI1MDY1OWQ1IiwiZWF0IjoiZXBpY2dhbWVzIn0sInBmZGlkIjoiY2E2MDU5MzdlMDUyNDEzY2JjYjJjOTA2YmFmMzlkMGQiLCJpc3MiOiJodHRwczpcL1wvYXBpLmVwaWNnYW1lcy5kZXZcL2F1dGhcL3YxXC9vYXV0aCIsImV4cCI6MTY2NzM0MTE3MCwidG9rZW5UeXBlIjoiaWRUb2tlbiIsImlhdCI6MTY2NzMzNzU3MCwicGZwaWQiOiIyYzRhYmViNWY1NWQ0ZjIxYmZjNzUxM2E2NDQwMjAxZiJ9.Kooooq8hsSf4_KEIIkqXKjak_YzUYlWyZ7h26al3W4kLU_iAG73L81zUznowJyQlPOoaf3aPfftYbIkXF3p1ENsuxD-ad9mAFodqEBYtwYtNxtxJ0KBB9ptYBA4On7kzG07-2sxPaY-mvDt2976dY09qsRXqJcYXtIq9oRcFpbRmpPGmmZVh28aLOjS9aqe1I9Mw3fXSqdObimG0TqE7Smp8Ypz0w3oLSMPKxIIp3VmPR2vQITVf8joSh-bYxF1EDtqCDmg0DsmnKnbHXW8-2WVzil3CO8_lZfy2y_oY7kpLQ1uJDURjQ8O0bUqbO5MkkwwzPkmsIOSWRc4aC2XoDQ'})\""
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "aws-jwt-verify": "^3.2.0"
+  }
+}

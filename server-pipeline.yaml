@@ -1,0 +1,370 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template for creating an ECR repository and a CodeBuild project
+Parameters:
+  ServerFolderName:
+    Type: String
+    Default: ServerImage
+    Description: Name of the folder containing the source code for the server
+  CodeCommitRepositoryName:
+    Type: String
+    Default: Server_Automation
+    Description: Name of the CodeCommit repository where the source code is stored
+  CodeCommitBranchName:
+    Type: String
+    Default: main
+    Description: Name of the branch where the source code is stored
+  DeployRegions:
+    Type: String
+    Default: 'us-east-1,us-west-2,sa-east-1,eu-west-1,eu-central-1'
+    Description: List of regions where the server will be deployed
+
+Resources:
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: matchmaking-server
+
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+      Policies:
+        - PolicyName: CodeBuildPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource:
+                  - !Sub "arn:aws:s3:::${PipelineArtifactStoreBucket}"
+                  - !Sub "arn:aws:s3:::${PipelineArtifactStoreBucket}/*"
+              - Effect: Allow
+                Action:
+                  - ecr:*
+                Resource: !GetAtt ECRRepository.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*:log-stream:*"
+
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+      Policies:
+        - PolicyName: CodePipelinePermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource:
+                  - !Sub "arn:aws:s3:::${PipelineArtifactStoreBucket}"
+                  - !Sub "arn:aws:s3:::${PipelineArtifactStoreBucket}/*"
+              - Effect: Allow
+                Action:
+                  - codecommit:*
+                Resource:
+                  - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepositoryName}"
+              - Effect: Allow
+                Action:
+                  - ecr:*
+                Resource: !GetAtt ECRRepository.Arn
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                Resource: !Sub "arn:aws:cloudformation:*:${AWS::AccountId}:stack/MatchmakingEcs*/*"
+              - Effect: Allow
+                Action:
+                  - ecs:*
+                Resource: '*'
+              - Action:
+                  - iam:CreateRole
+                  - iam:UpdateRole
+                  - iam:DeleteRole
+                  - iam:PassRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:getRolePolicy
+                Effect: Allow
+                Resource:
+                  - arn:aws:iam::*:role/ecsTaskExecutionRole
+                  - arn:aws:iam::*:role/server-pipeline-*
+                  - arn:aws:iam::*:role/MatchmakingEcs*
+              - Effect: "Allow"
+                Action:
+                  - "ec2:*"
+                Resource: "*"
+              - Action:
+                  - codebuild:*
+                Effect: Allow
+                Resource: 
+                  - !GetAtt CodeBuildProject.Arn
+                  - !GetAtt CodeBuildPublishEcsInfrastructureProject.Arn
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Effect: Allow
+                Resource:
+                  - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:/ecs/*:log-stream:*"
+                  - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:/ecs/*"
+
+  CodeBuildDeployEcsInfraServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: DeployEcsInfraPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource:
+                  - !Sub "arn:aws:s3:::${PipelineArtifactStoreBucket}"
+                  - !Sub "arn:aws:s3:::${PipelineArtifactStoreBucket}/*"
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                Resource: !Sub "arn:aws:cloudformation:*:${AWS::AccountId}:stack/MatchmakingEcs*/*"
+              - Effect: Allow
+                Action:
+                  - ecs:*
+                Resource: '*'
+              - Action:
+                  - iam:CreateRole
+                  - iam:UpdateRole
+                  - iam:DeleteRole
+                  - iam:PassRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:getRolePolicy
+                Effect: Allow
+                Resource:
+                  - arn:aws:iam::*:role/ecsTaskExecutionRole
+                  - arn:aws:iam::*:role/server-pipeline-*
+                  - arn:aws:iam::*:role/MatchmakingEcs*
+              - Effect: "Allow"
+                Action:
+                  - "ec2:*"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:PutRetentionPolicy
+                Resource:
+                  - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/codebuild/*"
+                  - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/codebuild/*:log-stream:*"
+                  - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:/ecs/*"
+                  - !Sub "arn:aws:logs:*:${AWS::AccountId}:log-group:/ecs/*:log-stream:*"
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: PublishToECR
+      Description: CodeBuild project to build matchmaking server Docker image and push to ECR
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws --version
+                - cd $SourceFolderName
+                - ECR_URL=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
+                - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+                - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+                - IMAGE_TAG=$COMMIT_HASH
+            build:
+              commands:
+                - echo Build started on `date`
+                - echo Building the Docker image...
+                - docker build -t $ECR_URL:latest .
+                - docker tag $ECR_URL:latest $ECR_URL:$IMAGE_TAG
+            post_build:
+              commands:
+                - echo Build completed on `date`
+                - echo Pushing the Docker images...
+                - echo ECR Repository URL $ECR_URL
+                - docker push $ECR_URL:latest
+                - docker push $ECR_URL:$IMAGE_TAG
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: SourceFolderName
+            Value: "source-folder"
+          - Name: ECR_REPOSITORY
+            Value: !Ref ECRRepository
+          - Name: AWS_REGION
+            Value: !Ref AWS::Region
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+      BadgeEnabled: false
+      TimeoutInMinutes: 60
+
+  CodeBuildPublishEcsInfrastructureProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: PublishEcsInfrastructure
+      Description: CodeBuild project to build matchmaking server Docker image and push to ECR
+      ServiceRole: !GetAtt CodeBuildDeployEcsInfraServiceRole.Arn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - |
+                  pids=""
+                  for region in $(echo $DEPLOY_REGIONS | tr "," "\n"); do
+                    STACK_NAME="MatchmakingEcs-$region"
+                    echo "Deploying $STACK_NAME in $region"
+
+                    aws cloudformation deploy \
+                      --stack-name $STACK_NAME \
+                      --template-file $SourceTemplateName \
+                      --capabilities CAPABILITY_IAM \
+                      --region $region > /dev/null 2>&1 &
+                    pids="$pids $!"
+                  done
+
+                  for pid in $pids; do
+                    wait "$pid"
+                    exit_status=$?
+
+                    if [ $exit_status -ne 0 ]; then
+                      error_occurred=true
+                      echo "Error occurred with process ID $pid, exit status $exit_status"
+                    fi
+                    if [ $exit_status -e 0 ]; then
+                      echo "process ID $pid succeeded"
+                    fi
+                  done
+
+                  if [ "$error_occurred" = true ]; then
+                    exit 1
+                  fi
+
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: SourceTemplateName
+            Value: "ecs-cluster.yaml"
+          - Name: DEPLOY_REGIONS
+            Value: "us-east-1"
+      BadgeEnabled: false
+      TimeoutInMinutes: 60
+
+  PipelineArtifactStoreBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-matchmaking-artifactstore-${AWS::Region}'
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStores:
+        - Region: !Ref AWS::Region
+          ArtifactStore:
+            Type: S3
+            Location: !Ref PipelineArtifactStoreBucket
+      Name: Matchmaking_Push_Image
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceRepo
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: '1'
+              OutputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                RepositoryName: !Ref CodeCommitRepositoryName
+                BranchName: !Ref CodeCommitBranchName
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: PublishToECR
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+                EnvironmentVariables: !Sub '[{"name":"SourceFolderName","value":"${ServerFolderName}"}]'
+              RunOrder: 1
+            - Name: CreateEcsInfrastructure
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                ProjectName: !Ref CodeBuildPublishEcsInfrastructureProject
+                EnvironmentVariables: !Sub '[{"name":"DEPLOY_REGIONS","value":"${DeployRegions}"}]'
+              RunOrder: 2
