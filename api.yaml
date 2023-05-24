@@ -65,7 +65,7 @@ Resources:
         Variables:
           ISSUER: https://api.epicgames.dev/auth/v1/oauth
           JWKS_URI: https://api.epicgames.dev/auth/v1/oauth/jwks
-          AUDIENCE: xyza7891LKxSJNsWmRALdJzNrDYQrfIb
+          AUDIENCE: "<YOUR-GAME-AUDIENCE>"
   
   Base64AuthFunction: # Authorizer for base64 encoded server credentials
     Type: "AWS::Serverless::Function"
